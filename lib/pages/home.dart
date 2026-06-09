@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:provider/provider.dart';
+import 'package:water_tracker/data/water_data.dart';
+import 'package:water_tracker/model/water_model.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -14,19 +14,20 @@ class _HomePageState extends State<HomePage> {
   final amountController = TextEditingController();
   bool isLoading = false;
 
-  Future<void> saveWater(String amount) async {
-    if (amount.isEmpty) {
+  Future<void> saveWater(String amountStr, BuildContext parentContext) async {
+    if (amountStr.isEmpty) {
       ScaffoldMessenger.of(
-        context,
+        parentContext,
       ).showSnackBar(const SnackBar(content: Text('Please enter an amount')));
       return;
     }
 
-    final baseUrl = dotenv.env['backUrl'];
+    // Parse double safely
+    final double amount = double.tryParse(amountStr) ?? 0;
 
-    if (baseUrl == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Configuration error: API URL missing')),
+    if (amount <= 0) {
+      ScaffoldMessenger.of(parentContext).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid amount')),
       );
       return;
     }
@@ -36,53 +37,52 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      String firebaseUrl = baseUrl.startsWith('http://')
-          ? baseUrl
-          : 'https://$baseUrl';
+      final waterData = Provider.of<WaterData>(parentContext, listen: false);
 
-      final url = Uri.parse('$firebaseUrl/water.json');
-
-      var response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'amount': double.parse(amount),
-          'unit': 'ml',
-          'dateTime': DateTime.now().toString(),
-        }),
+      final waterModel = WaterModel(
+        amount: amount,
+        dateTime: DateTime.now(),
+        unit: 'ml',
       );
 
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Water intake saved successfully')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save water intake')),
+      await waterData.saveWater(waterModel, parentContext);
+
+      amountController.clear();
+
+      // Show success message using parentContext
+      if (mounted) {
+        ScaffoldMessenger.of(parentContext).showSnackBar(
+          const SnackBar(content: Text('Water added successfully! ✅')),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error saving water intake')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(
+          parentContext,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      }
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
   void addWater() {
+    final parentContext = context; // Store parent context before dialog
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Add Water'),
         content: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('Add water to your daily intake'),
-            SizedBox(height: 10),
+            const SizedBox(height: 10),
             TextField(
               controller: amountController,
               keyboardType: TextInputType.number,
@@ -96,16 +96,24 @@ class _HomePageState extends State<HomePage> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context);
+              amountController.clear();
+              Navigator.pop(dialogContext);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              saveWater(amountController.text);
-              Navigator.pop(context);
+            onPressed: () async {
+              final amount = amountController.text.trim();
+              Navigator.pop(dialogContext); // Close dialog
+              await saveWater(amount, parentContext); // Use parent context
             },
-            child: const Text('Save'),
+            child: isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Save'),
           ),
         ],
       ),
@@ -118,15 +126,20 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         elevation: 4,
         centerTitle: true,
-        actions: [IconButton(onPressed: () {}, icon: Icon(Icons.map))],
-        title: Text('Water'),
+        actions: [
+          IconButton(
+            onPressed: () {
+              // TODO: Add map functionality
+            },
+            icon: const Icon(Icons.map),
+          ),
+        ],
+        title: const Text('Water Tracker'),
       ),
       backgroundColor: Theme.of(context).colorScheme.surface,
       floatingActionButton: FloatingActionButton(
-        child: Icon(Icons.add),
-        onPressed: () {
-          addWater();
-        },
+        child: const Icon(Icons.add),
+        onPressed: addWater,
       ),
     );
   }
